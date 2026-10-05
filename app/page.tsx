@@ -37,24 +37,23 @@ const kind = (v: string) => {
   if (["클레임", "클레임상담"].includes(x)) return "클레임상담";
   return x ? v.trim() : "미분류";
 };
-async function read(file: File) {
-  const wb = XLSX.read(await file.arrayBuffer(), {
-    type: "array",
-    cellDates: true,
-  });
+function readSheet(wb: XLSX.WorkBook, sheetName: string) {
   const data = XLSX.utils.sheet_to_json<unknown[]>(
-    wb.Sheets[wb.SheetNames[0]],
+    wb.Sheets[sheetName],
     { header: 1, defval: "", raw: false },
   );
   const i = data.findIndex((r) => r.some((v) => norm(v)));
-  if (i < 0) throw Error("데이터가 없는 파일입니다.");
+  if (i < 0) throw Error(`${sheetName} 시트에 데이터가 없습니다.`);
   return { headers: data[i].map(norm), data: data.slice(i + 1) };
 }
 
-async function readEnterprisePartners(file: File) {
-  const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+const findSheet = (wb: XLSX.WorkBook, preferredName: string, fallbackIndex: number) =>
+  wb.SheetNames.find((name) => head(name) === head(preferredName)) ??
+  wb.SheetNames[fallbackIndex];
+
+function readEnterprisePartners(wb: XLSX.WorkBook) {
   const preferred = wb.SheetNames.find((name) => head(name) === head("대기업협력사"));
-  const sheetName = preferred ?? wb.SheetNames[1];
+  const sheetName = preferred ?? wb.SheetNames[2];
   if (!sheetName) return [];
   const data = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheetName], {
     header: 1,
@@ -263,8 +262,7 @@ function partnerSummarySheet(
   return ws;
 }
 export default function Home() {
-  const [sf, setSf] = useState<File | null>(null),
-    [af, setAf] = useState<File | null>(null),
+  const [file, setFile] = useState<File | null>(null),
     [rows, setRows] = useState<R[]>([]),
     [as, setAs] = useState<A[]>([]),
     [enterprisePartners, setEnterprisePartners] = useState<string[]>([]),
@@ -280,13 +278,21 @@ export default function Home() {
     );
   }, [rows]);
   async function analyze() {
-    if (!sf || !af) return setMsg("파일 2개를 모두 선택해주세요.");
+    if (!file) return setMsg("통합 XLSX 파일을 선택해주세요.");
     try {
-      const [r1, r2, enterprise] = await Promise.all([
-          read(sf),
-          read(af),
-          readEnterprisePartners(af),
-        ]),
+      const wb = XLSX.read(await file.arrayBuffer(), {
+          type: "array",
+          cellDates: true,
+        }),
+        consultationSheet = findSheet(wb, "상담내역", 0),
+        assignmentSheet = findSheet(wb, "담당고객사", 1);
+      if (!consultationSheet)
+        throw Error("상담내역 시트를 찾을 수 없습니다.");
+      if (!assignmentSheet)
+        throw Error("담당고객사 시트를 찾을 수 없습니다.");
+      const r1 = readSheet(wb, consultationSheet),
+        r2 = readSheet(wb, assignmentSheet),
+        enterprise = readEnterprisePartners(wb),
         s = source(r1),
         a = assign(r2),
         dups = a.map((x) => x.customer).filter((x, i, z) => z.indexOf(x) !== i);
@@ -476,9 +482,11 @@ export default function Home() {
             </p>
           </div>
         </header>
-        <section className="grid gap-4 md:grid-cols-2">
-          <Box title="1. 월간 상담내역" file={sf} set={setSf} />
-          <Box title="2. 기준표 (담당고객사 + 대기업협력사)" file={af} set={setAf} />
+        <section>
+          <Box title="통합 VOC 파일" file={file} set={setFile} />
+          <p className="mt-3 text-sm leading-6 text-slate-400">
+            시트 구성: 1. 상담내역 · 2. 담당고객사 · 3. 대기업협력사(선택)
+          </p>
         </section>
         <button
           onClick={analyze}
