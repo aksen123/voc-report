@@ -60,13 +60,11 @@ function readEnterprisePartners(wb: XLSX.WorkBook) {
     defval: "",
     raw: false,
   });
-  const headerRow = data.findIndex((row) =>
-    row.some((value) => ["협력사명", "협력사"].some((alias) => head(value) === head(alias))),
-  );
+  // "협력사명 (대기업)"처럼 괄호 설명이 붙은 헤더도 허용
+  const isPartnerHeader = (value: unknown) => head(value).startsWith("협력사");
+  const headerRow = data.findIndex((row) => row.some(isPartnerHeader));
   if (headerRow < 0) throw Error("대기업협력사 시트에서 협력사명 열을 찾을 수 없습니다.");
-  const partnerColumn = data[headerRow].findIndex((value) =>
-    ["협력사명", "협력사"].some((alias) => head(value) === head(alias)),
-  );
+  const partnerColumn = data[headerRow].findIndex(isPartnerHeader);
   return data
     .slice(headerRow + 1)
     .map((row) => norm(row[partnerColumn]))
@@ -101,8 +99,13 @@ function assign(p: ReturnType<typeof readSheet>) {
     );
   if (c < 0 || u < 0)
     throw Error("담당 고객사 파일에는 상담사(담당자), 고객사 열이 필요합니다.");
+  // 담당자 칸이 첫 행에만 적혀 있는 경우(병합/생략) 위 값을 이어서 사용
+  let counselor = "";
   return p.data
-    .map((r) => ({ counselor: norm(r[c]), customer: norm(r[u]) }))
+    .map((r) => {
+      counselor = norm(r[c]) || counselor;
+      return { counselor, customer: norm(r[u]) };
+    })
     .filter((x) => x.counselor && x.customer);
 }
 const border = {
@@ -495,13 +498,13 @@ export default function Home() {
           파일 확인하기
         </button>
         {msg && (
-          <p className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4">
+          <p className="mt-4 whitespace-pre-wrap break-words rounded-xl border border-slate-700 bg-slate-900 p-4">
             {msg}
           </p>
         )}
         {rows.length > 0 && (
           <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <div className="mb-5 flex items-center justify-between gap-3">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold">협력사 요약 작성</h2>
                 <p className="text-sm text-slate-400">
@@ -510,7 +513,7 @@ export default function Home() {
               </div>
               <button
                 onClick={download}
-                className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-bold text-slate-950"
+                className="flex shrink-0 items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-bold text-slate-950"
               >
                 <Download size={18} />
                 XLSX 다운로드
@@ -520,12 +523,12 @@ export default function Home() {
               {partners.map(([n, rs]) => (
                 <div
                   key={n}
-                  className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950 p-4 md:grid-cols-[250px_60px_1fr]"
+                  className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950 p-4 md:grid-cols-[250px_60px_minmax(0,1fr)]"
                 >
-                  <b>{n}</b>
+                  <b className="break-words">{n}</b>
                   <span className="text-amber-300">{rs.length}건</span>
                   <textarea
-                    className="min-h-20 rounded-lg border border-slate-700 bg-slate-900 p-3"
+                    className="min-h-20 w-full min-w-0 rounded-lg border border-slate-700 bg-slate-900 p-3"
                     placeholder="요약을 직접 입력하세요"
                     value={sum[n] ?? ""}
                     onChange={(e) =>
@@ -551,17 +554,27 @@ function Box({
   set: (f: File | null) => void;
 }) {
   return (
-    <label className="cursor-pointer rounded-2xl border border-dashed border-slate-700 bg-slate-900 p-6 hover:border-amber-400">
+    <label
+      className={`relative flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-8 text-center transition-colors hover:border-amber-400 ${
+        file ? "border-amber-400/60 bg-amber-400/5" : "border-slate-700 bg-slate-900"
+      }`}
+    >
       <input
         className="sr-only"
         type="file"
         accept=".xlsx,.xls"
         onChange={(e) => set(e.target.files?.[0] ?? null)}
       />
-      <Upload className="mb-4 text-amber-400" />
+      {file ? (
+        <FileSpreadsheet className="size-8 text-amber-400" />
+      ) : (
+        <Upload className="size-8 text-amber-400" />
+      )}
       <b>{title}</b>
-      <p className="mt-1 text-sm text-slate-400">
-        {file?.name ?? "XLSX 파일 선택"}
+      <p
+        className={`max-w-full truncate text-sm ${file ? "font-medium text-amber-300" : "text-slate-400"}`}
+      >
+        {file?.name ?? "클릭해서 XLSX 파일 선택"}
       </p>
     </label>
   );
