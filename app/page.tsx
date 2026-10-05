@@ -72,7 +72,7 @@ function readEnterprisePartners(wb: XLSX.WorkBook) {
     .map((row) => norm(row[partnerColumn]))
     .filter(Boolean);
 }
-function source(p: Awaited<ReturnType<typeof read>>) {
+function source(p: ReturnType<typeof readSheet>) {
   const ix: Record<string, number> = {};
   keys.forEach((k) => {
     ix[k] = p.headers.findIndex((h) =>
@@ -92,7 +92,7 @@ function source(p: Awaited<ReturnType<typeof read>>) {
         ) as R,
     );
 }
-function assign(p: Awaited<ReturnType<typeof read>>) {
+function assign(p: ReturnType<typeof readSheet>) {
   const c = p.headers.findIndex((h) =>
       aliases.상담자명.some((a) => head(a) === head(h)),
     ),
