@@ -147,7 +147,15 @@ function sheet(
   rows.forEach((_, ri) =>
     headers.forEach((__, c) => {
       const x = ws[XLSX.utils.encode_cell({ r: ri + 3, c })];
-      if (x) x.s = { border, alignment: { vertical: "top", wrapText: true } };
+      // 상담내용만 왼쪽 정렬, 나머지는 가운데 정렬
+      if (x)
+        x.s = {
+          border,
+          alignment:
+            headers[c] === "상담내용"
+              ? { horizontal: "left", vertical: "top", wrapText: true }
+              : { horizontal: "center", vertical: "center", wrapText: true },
+        };
     }),
   );
   const contentIndex = headers.indexOf("상담내용");
@@ -259,7 +267,7 @@ function partnerSummarySheet(
     if (row <= 2 || row === enterpriseHeaderRow || row === marketRows.length + 2) return;
     [0, 1, 2].forEach((column) => {
       const cell = ws[XLSX.utils.encode_cell({ r: row, c: column })];
-      if (cell) cell.s = { border, alignment: { vertical: "top", horizontal: column === 1 ? "center" : "left", wrapText: true } };
+      if (cell) cell.s = { border, alignment: column === 2 ? { vertical: "top", horizontal: "left", wrapText: true } : { vertical: "center", horizontal: "center", wrapText: true } };
     });
   });
   return ws;
