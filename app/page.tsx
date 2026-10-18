@@ -108,6 +108,7 @@ function assign(p: ReturnType<typeof readSheet>) {
     })
     .filter((x) => x.counselor && x.customer);
 }
+const centerColumns = new Set(["우선순위", "상담자명", "상담일시", "상담구분", "분류"]);
 const border = {
   top: { style: "thin", color: { rgb: "111827" } },
   bottom: { style: "thin", color: { rgb: "111827" } },
@@ -119,6 +120,7 @@ function sheet(
   headers: string[],
   rows: string[][],
   color = "F7C85E",
+  highlightRows = new Set<number>(),
 ) {
   const ws = XLSX.utils.aoa_to_sheet([[title], [], headers, ...rows]);
   ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }];
@@ -147,14 +149,28 @@ function sheet(
   rows.forEach((_, ri) =>
     headers.forEach((__, c) => {
       const x = ws[XLSX.utils.encode_cell({ r: ri + 3, c })];
-      // 상담내용만 왼쪽 정렬, 나머지는 가운데 정렬
+      // 강조 행(협력사별 개수 등)은 초록 배경 + 굵게 + 가운데 정렬
+      if (x && highlightRows.has(ri)) {
+        x.s = {
+          border,
+          fill: { fgColor: { rgb: "C6E0B4" } },
+          font: { bold: true },
+          alignment: { horizontal: "left", vertical: "center" },
+        };
+        return;
+      }
+      // 짧은 값 열(우선순위·상담자·날짜·분류)만 가운데, 나머지는 왼쪽 정렬
       if (x)
         x.s = {
           border,
           alignment:
             headers[c] === "상담내용"
               ? { horizontal: "left", vertical: "top", wrapText: true }
-              : { horizontal: "center", vertical: "center", wrapText: true },
+              : {
+                  horizontal: centerColumns.has(headers[c]) ? "center" : "left",
+                  vertical: "center",
+                  wrapText: true,
+                },
         };
     }),
   );
@@ -163,7 +179,8 @@ function sheet(
     { hpt: 28 },
     { hpt: 8 },
     { hpt: 22 },
-    ...rows.map((r) => {
+    ...rows.map((r, ri) => {
+      if (highlightRows.has(ri)) return { hpt: 24 };
       const v = contentIndex >= 0 ? (r[contentIndex] ?? "") : "";
       const lines = Math.max(
         1,
@@ -267,7 +284,7 @@ function partnerSummarySheet(
     if (row <= 2 || row === enterpriseHeaderRow || row === marketRows.length + 2) return;
     [0, 1, 2].forEach((column) => {
       const cell = ws[XLSX.utils.encode_cell({ r: row, c: column })];
-      if (cell) cell.s = { border, alignment: column === 2 ? { vertical: "top", horizontal: "left", wrapText: true } : { vertical: "center", horizontal: "center", wrapText: true } };
+      if (cell) cell.s = { border, alignment: { vertical: column === 2 ? "top" : "center", horizontal: column === 1 ? "center" : "left", wrapText: true } };
     });
   });
   return ws;
@@ -304,11 +321,19 @@ export default function Home() {
       const r1 = readSheet(wb, consultationSheet),
         r2 = readSheet(wb, assignmentSheet),
         enterprise = readEnterprisePartners(wb),
-        s = source(r1),
+        all = source(r1),
         a = assign(r2),
+        // 담당고객사 시트의 담당자(팀원) 상담만 남김
+        team = [...new Set(a.map((x) => x.counselor))],
+        teamSet = new Set(team.map(head)),
+        s = all.filter((r) => teamSet.has(head(r.상담자명))),
         dups = a.map((x) => x.customer).filter((x, i, z) => z.indexOf(x) !== i);
       if (dups.length)
         throw Error(`중복 고객사: ${[...new Set(dups)].join(", ")}`);
+      if (!s.length)
+        throw Error(
+          `상담내역에 담당자(${team.join(", ")})의 상담이 없습니다. 상담자명을 확인해주세요.`,
+        );
       setRows(s);
       setAs(a);
       setEnterprisePartners(enterprise);
@@ -319,10 +344,11 @@ export default function Home() {
             .filter((x) => !["일반상담", "클레임상담"].includes(x)),
         ),
       ];
+      const teamInfo = `전체 ${all.length}건 중 팀원(${team.join(", ")}) 상담 ${s.length}건을 확인했습니다.`;
       setMsg(
         u.length
-          ? `확인할 상담구분: ${u.join(", ")}`
-          : `${s.length}건을 확인했습니다. 대기업 협력사 ${enterprise.length}개를 불러왔습니다.`,
+          ? `${teamInfo}\n확인할 상담구분: ${u.join(", ")}`
+          : `${teamInfo} 대기업 협력사 ${enterprise.length}개를 불러왔습니다.`,
       );
     } catch (e) {
       setRows([]);
@@ -364,21 +390,31 @@ export default function Home() {
       ),
       "전체",
     );
+    // 협력사별 상담 행 뒤에 "OO 개수" 행을 붙여 초록색으로 강조
+    const partnerRows: string[][] = [];
+    const partnerCountRows = new Set<number>();
+    partners.forEach(([name, rs]) => {
+      rs.forEach((r) =>
+        partnerRows.push([
+          r.상담일자,
+          r.고객사명,
+          r.상담명,
+          r.우선순위,
+          r.협력사명,
+          r.상담내용,
+        ]),
+      );
+      partnerCountRows.add(partnerRows.length);
+      partnerRows.push(["", "", "", "", `${name} 개수`, String(rs.length)]);
+    });
     XLSX.utils.book_append_sheet(
       wb,
       sheet(
         `${period} 협력사`,
         ["상담일시", "고객사명", "상담명", "우선순위", "협력사명", "상담내용"],
-        partners.flatMap(([, rs]) =>
-          rs.map((r) => [
-            r.상담일자,
-            r.고객사명,
-            r.상담명,
-            r.우선순위,
-            r.협력사명,
-            r.상담내용,
-          ]),
-        ),
+        partnerRows,
+        undefined,
+        partnerCountRows,
       ),
       "협력사",
     );
