@@ -12,8 +12,11 @@ const keys = [
   "상담일자",
   "상담구분",
   "우선순위",
+  "분류",
   "상담내용",
 ];
+// 분류 열이 없는 예전 파일은 빈칸으로 처리
+const optionalKeys = ["분류"];
 const aliases: Record<string, string[]> = {
   고객사명: ["고객사명", "고객사", "상담기관"],
   협력사명: ["협력사명", "협력사"],
@@ -22,6 +25,7 @@ const aliases: Record<string, string[]> = {
   상담일자: ["상담일자", "상담일시"],
   상담구분: ["상담구분", "구분"],
   우선순위: ["우선순위"],
+  분류: ["분류"],
   상담내용: ["상담내용", "내용"],
 };
 const norm = (v: unknown) =>
@@ -37,12 +41,16 @@ const kind = (v: string) => {
   if (["클레임", "클레임상담"].includes(x)) return "클레임상담";
   return x ? v.trim() : "미분류";
 };
-function readSheet(wb: XLSX.WorkBook, sheetName: string) {
+const isHeader = (k: string) => (v: unknown) =>
+  aliases[k].some((a) => head(a) === head(v));
+function readSheet(wb: XLSX.WorkBook, sheetName: string, headerKeys: string[]) {
   const data = XLSX.utils.sheet_to_json<unknown[]>(
     wb.Sheets[sheetName],
     { header: 1, defval: "", raw: false },
   );
-  const i = data.findIndex((r) => r.some((v) => norm(v)));
+  // 제목 행("2026. 09월 상담이력관리") 아래에 있는 헤더 행을 찾음
+  const headerRow = data.findIndex((r) => headerKeys.every((k) => r.some(isHeader(k))));
+  const i = headerRow >= 0 ? headerRow : data.findIndex((r) => r.some((v) => norm(v)));
   if (i < 0) throw Error(`${sheetName} 시트에 데이터가 없습니다.`);
   return { headers: data[i].map(norm), data: data.slice(i + 1) };
 }
@@ -73,10 +81,8 @@ function readEnterprisePartners(wb: XLSX.WorkBook) {
 function source(p: ReturnType<typeof readSheet>) {
   const ix: Record<string, number> = {};
   keys.forEach((k) => {
-    ix[k] = p.headers.findIndex((h) =>
-      aliases[k].some((a) => head(a) === head(h)),
-    );
-    if (ix[k] < 0) throw Error(`필수 열을 찾을 수 없습니다: ${k}`);
+    ix[k] = p.headers.findIndex(isHeader(k));
+    if (ix[k] < 0 && !optionalKeys.includes(k)) throw Error(`필수 열을 찾을 수 없습니다: ${k}`);
   });
   return p.data
     .filter((r) => r.some((v) => norm(v)))
@@ -85,18 +91,18 @@ function source(p: ReturnType<typeof readSheet>) {
         Object.fromEntries(
           keys.map((k) => [
             k,
-            k === "상담내용" ? formatContent(norm(r[ix[k]])) : norm(r[ix[k]]),
+            ix[k] < 0
+              ? ""
+              : k === "상담내용"
+                ? formatContent(norm(r[ix[k]]))
+                : norm(r[ix[k]]),
           ]),
         ) as R,
     );
 }
 function assign(p: ReturnType<typeof readSheet>) {
-  const c = p.headers.findIndex((h) =>
-      aliases.상담자명.some((a) => head(a) === head(h)),
-    ),
-    u = p.headers.findIndex((h) =>
-      aliases.고객사명.some((a) => head(a) === head(h)),
-    );
+  const c = p.headers.findIndex(isHeader("상담자명")),
+    u = p.headers.findIndex(isHeader("고객사명"));
   if (c < 0 || u < 0)
     throw Error("담당 고객사 파일에는 상담사(담당자), 고객사 열이 필요합니다.");
   // 담당자 칸이 첫 행에만 적혀 있는 경우(병합/생략) 위 값을 이어서 사용
@@ -318,8 +324,8 @@ export default function Home() {
         throw Error("상담내역 시트를 찾을 수 없습니다.");
       if (!assignmentSheet)
         throw Error("담당고객사 시트를 찾을 수 없습니다.");
-      const r1 = readSheet(wb, consultationSheet),
-        r2 = readSheet(wb, assignmentSheet),
+      const r1 = readSheet(wb, consultationSheet, ["고객사명", "상담명", "상담내용"]),
+        r2 = readSheet(wb, assignmentSheet, ["상담자명", "고객사명"]),
         enterprise = readEnterprisePartners(wb),
         all = source(r1),
         a = assign(r2),
@@ -383,7 +389,7 @@ export default function Home() {
           r.상담일자,
           r.상담구분,
           r.우선순위,
-          "",
+          r.분류,
           r.상담내용,
           r.협력사명,
         ]),
@@ -427,29 +433,50 @@ export default function Home() {
       "분류",
       "상담내용",
     ];
-    [
-      ["일반상담", "일반 상담"],
-      ["클레임상담", "클레임 상담"],
-    ].forEach(([sn, title]) =>
-      XLSX.utils.book_append_sheet(
-        wb,
-        sheet(
-          title,
-          ch,
-          rows
-            .filter((r) => kind(r.상담구분) === sn)
-            .map((r) => [
-              r.고객사명,
-              r.상담명,
-              r.상담자명,
-              r.상담일자,
-              r.우선순위,
-              "",
-              r.상담내용,
-            ]),
-        ),
-        sn,
+    const consultationRow = (r: R) => [
+      r.고객사명,
+      r.상담명,
+      r.상담자명,
+      r.상담일자,
+      r.우선순위,
+      r.분류,
+      r.상담내용,
+    ];
+    XLSX.utils.book_append_sheet(
+      wb,
+      sheet(
+        "일반 상담",
+        ch,
+        rows.filter((r) => kind(r.상담구분) === "일반상담").map(consultationRow),
       ),
+      "일반상담",
+    );
+    // 클레임은 분류별로 묶고 "OO 개수" 행을 붙여 강조 (협력사 시트와 같은 방식)
+    const claimGroups = new Map<string, R[]>();
+    rows
+      .filter((r) => kind(r.상담구분) === "클레임상담")
+      .forEach((r) => {
+        const category = r.분류 || "미분류";
+        claimGroups.set(category, [...(claimGroups.get(category) ?? []), r]);
+      });
+    const claimRows: string[][] = [];
+    const claimCountRows = new Set<number>();
+    [...claimGroups]
+      .sort(
+        (a, b) =>
+          Number(a[0] === "미분류") - Number(b[0] === "미분류") ||
+          b[1].length - a[1].length ||
+          a[0].localeCompare(b[0], "ko"),
+      )
+      .forEach(([category, rs]) => {
+        rs.forEach((r) => claimRows.push(consultationRow(r)));
+        claimCountRows.add(claimRows.length);
+        claimRows.push(["", "", "", "", "", `${category} 개수`, String(rs.length)]);
+      });
+    XLSX.utils.book_append_sheet(
+      wb,
+      sheet("클레임 상담", ch, claimRows, undefined, claimCountRows),
+      "클레임상담",
     );
     const enterpriseSet = new Set(enterprisePartners.map(head));
     const enterprisePartnerRows = partners.filter(([name]) => enterpriseSet.has(head(name)));
@@ -532,7 +559,7 @@ export default function Home() {
         <section>
           <Box title="통합 VOC 파일" file={file} set={setFile} />
           <p className="mt-3 text-sm leading-6 text-slate-400">
-            시트 구성: 1. 상담내역 · 2. 담당고객사 · 3. 대기업협력사(선택)
+            시트 구성: 1. 상담내역(분류 포함) · 2. 담당고객사 · 3. 대기업협력사(선택)
           </p>
         </section>
         <button
