@@ -397,9 +397,12 @@ export default function Home() {
       "전체",
     );
     // 협력사별 상담 행 뒤에 "OO 개수" 행을 붙여 초록색으로 강조
+    const enterpriseSet = new Set(enterprisePartners.map(head));
+    const enterprisePartnerRows = partners.filter(([name]) => enterpriseSet.has(head(name)));
+    const marketPartnerRows = partners.filter(([name]) => !enterpriseSet.has(head(name)));
     const partnerRows: string[][] = [];
     const partnerCountRows = new Set<number>();
-    partners.forEach(([name, rs]) => {
+    [...marketPartnerRows, ...enterprisePartnerRows].forEach(([name, rs]) => {
       rs.forEach((r) =>
         partnerRows.push([
           r.상담일자,
@@ -478,9 +481,6 @@ export default function Home() {
       sheet("클레임 상담", ch, claimRows, undefined, claimCountRows),
       "클레임상담",
     );
-    const enterpriseSet = new Set(enterprisePartners.map(head));
-    const enterprisePartnerRows = partners.filter(([name]) => enterpriseSet.has(head(name)));
-    const marketPartnerRows = partners.filter(([name]) => !enterpriseSet.has(head(name)));
     XLSX.utils.book_append_sheet(
       wb,
       partnerSummarySheet(
@@ -540,6 +540,15 @@ export default function Home() {
       ),
       "메인요약",
     );
+    // 모든 시트에 같은 글꼴을 적용하고 기존 크기·굵기 등은 유지
+    wb.SheetNames.forEach((name) => {
+      const ws = wb.Sheets[name];
+      Object.keys(ws).forEach((address) => {
+        if (address.startsWith("!")) return;
+        const cell = ws[address];
+        cell.s = { ...cell.s, font: { ...cell.s?.font, name: "맑은 고딕" } };
+      });
+    });
     XLSX.writeFile(wb, `VOC_${period.replace(/[ .]/g, "")}.xlsx`);
   }
   return (
